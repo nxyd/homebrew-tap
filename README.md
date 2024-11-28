@@ -5,8 +5,8 @@ homebrew core/cask update schedule.
 
 #### ClashX.Meta
 
-install: `brew install --cask nxyd/homebrew/clashx-meta`
+install: `brew install --cask nxyd/homebrew-tap/clashx-meta`
 
 #### FlClash
 
-install: `brew install --cask nxyd/homebrew/flclash`
+install: `brew install --cask nxyd/homebrew-tap/flclash`
