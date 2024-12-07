@@ -1,0 +1,106 @@
+name: Auto Update flclash.rb
+
+on:
+  workflow_dispatch:
+  watch:
+    types: [started]
+  schedule:
+    - cron: '*/30 * * * *'
+  push:
+    paths-ignore:
+      - .github
+      - .gitignore
+      - LICENSE
+      - README.md
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  Update:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            branch: main
+            repo: chen08209/FlClash
+            softName: FlClash
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Repository Owner
+        id: check_owner
+        run: |
+          if [ "${{ github.repository_owner }}" != "nxyd" ]; then
+            echo "Repository owner is not nxyd. Cancelling the job."
+            exit 1
+          fi
+
+      - name: Get brew file path
+        id: get_brew_file_path
+        run: |
+          packageName=$(echo "${{ matrix.softName }}" | awk '{print tolower($0)}' | sed 's/\./-/g')
+          BREW_FILE_PATH=$(echo "Casks/${packageName}.rb")
+          echo "BREW_FILE_PATH=${BREW_FILE_PATH}" >> $GITHUB_ENV
+
+      - name: Get latest release
+        id: get_latest_release
+        run: |
+          # 获取最新发布的版本
+          wget https://api.github.com/repos/${{ matrix.repo }}/releases/latest -O latest.txt
+          LATEST_RELEASE=$(cat latest.txt | grep "tag_name" | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//g;s/ //g' | sed 's/app\///g' | sed 's/^v//')
+          echo "LATEST_RELEASE=${LATEST_RELEASE}" >> $GITHUB_ENV
+          
+          DOWNLOAD_URL=$(cat latest.txt | grep "browser_download_url" | grep "macos-arm64" | head -n 1 | grep -oP '(?<=: ")[^"]*' | sed 's/\"//g;s/,//g;s/ //g')
+          echo "DOWNLOAD_URL=${DOWNLOAD_URL}" >> $GITHUB_ENV
+
+          rm latest.txt
+
+      - name: Read previous release
+        id: read_previous_release
+        run: |
+          # 读取上一个发布版本并存储到环境变量
+          PREVIOUS_RELEASE=$(cat ${{ env.BREW_FILE_PATH }} | grep 'version' | head -n 1 | sed -E 's/.*version "(.*)".*/\1/')
+          echo "PREVIOUS_RELEASE=${PREVIOUS_RELEASE}" >> $GITHUB_ENV
+
+      - name: Compare releases
+        id: compare_releases
+        run: |
+          if [ "${{ env.LATEST_RELEASE }}" != "${{ env.PREVIOUS_RELEASE }}" ]; then
+            echo "New release detected!"
+            echo "NEW_RELEASE=true" >> $GITHUB_ENV
+          echo "PREVIOUS_RELEASE=${{ env.LATEST_RELEASE }}" >> $GITHUB_ENV
+          else
+            echo "No new release."
+            echo "NEW_RELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Update Files
+        if: env.NEW_RELEASE == 'true'
+        run: |
+          wget ${{ env.DOWNLOAD_URL }} -O ${{ matrix.softName }}.zip
+
+          SHA256_VALUE=$(shasum -a 256 ${{ matrix.softName }}.zip | awk '{ print $1 }')
+
+          rm ${{ matrix.softName }}.zip
+
+          # 替换 version
+          sed -i "s/version \".*\"/version \"${{ env.LATEST_RELEASE }}\"/" ${{ env.BREW_FILE_PATH }}
+
+          # 替换 sha256
+          sed -i "s/sha256 \".*\"/sha256 \"$SHA256_VALUE\"/" ${{ env.BREW_FILE_PATH }}
+
+      - name: Commit
+        if: env.NEW_RELEASE == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          git commit -m "Update ${{ matrix.softName }} to latest version: ${{ env.LATEST_RELEASE }}."
+
+      - name: Push
+        if: env.NEW_RELEASE == 'true'
+        run: git push origin ${{ matrix.branch }}
