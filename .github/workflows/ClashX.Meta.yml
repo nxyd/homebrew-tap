@@ -99,7 +99,7 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add -A
-          git commit -a "Update ${{ matrix.softName }} to latest version: ${{ env.LATEST_RELEASE }}."
+          git commit -m "Update ${{ matrix.softName }} to latest version: ${{ env.LATEST_RELEASE }}."
 
       - name: Push
         if: env.NEW_RELEASE == 'true'
