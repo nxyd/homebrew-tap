@@ -1,6 +1,6 @@
 cask "flclash" do
-    version "0.8.85"
-    sha256 "39db2244b4c5e30cd57747c069622d8237725c5e6edd6c4ac977d1c5c0c293f9"
+    version "0.8.86"
+    sha256 "9921b38cf6bf9d2c22893bb748f792c6932339a7906d8db51f0c50bd9f61e8fa"
 
     url "https://github.com/chen08209/FlClash/releases/download/v#{version}/FlClash-#{version}-macos-arm64.dmg"
     name "Flclash"
