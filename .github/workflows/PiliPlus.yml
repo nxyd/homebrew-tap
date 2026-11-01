@@ -1,0 +1,154 @@
+name: Auto Update piliplus.rb
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'
+  push:
+    paths:
+      - .github/workflows/PiliPlus.yml
+      - Casks/piliplus.rb
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-piliplus
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  Update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Repository Owner
+        run: |
+          if [ "${{ github.repository_owner }}" != "nxyd" ]; then
+            echo "Repository owner is not nxyd. Cancelling the job."
+            exit 1
+          fi
+
+      - name: Update cask
+        run: |
+          #!/usr/bin/env bash
+          # Bump Casks/piliplus.rb to the latest PiliPlus macOS release.
+          #
+          # PiliPlus quirks this script has to deal with:
+          #   * the release tag is not always the app version (tag 2.1.6.1 ships 2.1.6)
+          #   * the dmg file name carries a build number: PiliPlus_macos_<version>+<build>.dmg
+          #   * '+' is percent-encoded as %2B inside GitHub asset URLs
+          #   * the first asset of a release is an apk, not the dmg
+          set -euo pipefail
+
+          REPO="bggRGjQaUbCoE/PiliPlus"
+          CASK="Casks/piliplus.rb"
+          API_URL="${GITHUB_API_URL:-https://api.github.com}"
+          TMP_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+          RELEASES_JSON="${TMP_DIR}/piliplus-releases.json"
+          DMG="${TMP_DIR}/piliplus-latest.dmg"
+          MACOS_ASSET_REGEX="/PiliPlus_macos_[^/]+\.dmg$"
+
+          echo "Fetching releases for ${REPO}"
+          curl -fsSL --retry 3 --retry-delay 5 \
+            -H "Accept: application/vnd.github+json" \
+            "${API_URL}/repos/${REPO}/releases?per_page=30" -o "${RELEASES_JSON}"
+
+          if ! jq -e 'type == "array"' "${RELEASES_JSON}" >/dev/null 2>&1; then
+            echo "::error::Unexpected GitHub API response: $(head -c 300 "${RELEASES_JSON}")"
+            exit 1
+          fi
+
+          # Newest published release that actually ships a macOS dmg ("<tag>\t<url>").
+          LATEST=$(jq -r --arg re "${MACOS_ASSET_REGEX}" '
+            [ .[]
+              | select(.draft == false and .prerelease == false)
+              | . as $release
+              | { published: $release.published_at,
+                  tag: $release.tag_name,
+                  url: ([ $release.assets[].browser_download_url | select(test($re)) ] | first) }
+              | select(.url != null)
+            ]
+            | sort_by(.published) | reverse | first
+            | select(. != null)
+            | "\(.tag)\t\(.url)"' "${RELEASES_JSON}")
+
+          if [[ -z "${LATEST}" ]]; then
+            echo "::error::No published release with a macOS dmg was found for ${REPO}"
+            exit 1
+          fi
+          IFS=$'\t' read -r TAG ASSET_URL <<< "${LATEST}"
+          echo "Latest release: ${TAG}"
+          echo "Asset: ${ASSET_URL}"
+
+          # PiliPlus_macos_2.2.0%2B5580.dmg -> PiliPlus_macos_2.2.0+5580.dmg
+          ASSET_NAME=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1].rsplit("/", 1)[-1]))' "${ASSET_URL}")
+
+          if [[ ! "${ASSET_NAME}" =~ ^PiliPlus_macos_([0-9]+(\.[0-9]+)+)\+([0-9]+)\.dmg$ ]]; then
+            echo "::error::Unexpected macOS asset name: ${ASSET_NAME}"
+            exit 1
+          fi
+          APP_VERSION="${BASH_REMATCH[1]}"
+          BUILD_NUMBER="${BASH_REMATCH[3]}"
+
+          if [[ ! "${TAG}" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "::error::Unexpected release tag: ${TAG}"
+            exit 1
+          fi
+
+          # version is "<app version>,<build>,<release tag>": the tag is not derivable
+          # from the dmg name (tag 2.1.6.1 ships PiliPlus_macos_2.1.6+5471.dmg).
+          NEW_VERSION="${APP_VERSION},${BUILD_NUMBER},${TAG}"
+
+          echo "Downloading ${ASSET_NAME}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "${DMG}" "${ASSET_URL}"
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            NEW_SHA256=$(sha256sum "${DMG}" | awk '{ print $1 }')
+          else
+            NEW_SHA256=$(shasum -a 256 "${DMG}" | awk '{ print $1 }')
+          fi
+          rm -f "${DMG}"
+
+          CURRENT_VERSION=$(sed -nE 's/^ *version "(.*)"$/\1/p' "${CASK}" | head -n 1)
+          CURRENT_SHA256=$(sed -nE 's/^ *sha256 "(.*)"$/\1/p' "${CASK}" | head -n 1)
+
+          echo "Current: ${CURRENT_VERSION} ${CURRENT_SHA256}"
+          echo "Latest:  ${NEW_VERSION} ${NEW_SHA256}"
+
+          if [[ "${CURRENT_VERSION}" == "${NEW_VERSION}" && "${CURRENT_SHA256}" == "${NEW_SHA256}" ]]; then
+            echo "PiliPlus is already up to date."
+            if [[ -n "${GITHUB_ENV:-}" ]]; then
+              echo "UPDATED=false" >> "${GITHUB_ENV}"
+            fi
+            exit 0
+          fi
+
+          perl -pi -e 's{^  version ".*"$}{  version "'"${NEW_VERSION}"'"}' "${CASK}"
+          perl -pi -e 's{^  sha256 ".*"$}{  sha256 "'"${NEW_SHA256}"'"}' "${CASK}"
+
+          # Fail loudly instead of committing a broken cask.
+          grep -qx "  version \"${NEW_VERSION}\"" "${CASK}"
+          grep -qx "  sha256 \"${NEW_SHA256}\"" "${CASK}"
+
+          echo "Updated ${CASK} to ${NEW_VERSION}"
+          if [[ -n "${GITHUB_ENV:-}" ]]; then
+            echo "UPDATED=true" >> "${GITHUB_ENV}"
+            echo "VERSION=${NEW_VERSION}" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Commit
+        if: env.UPDATED == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Casks/piliplus.rb
+          git commit -m "Update PiliPlus to latest version: ${{ env.VERSION }}."
+
+      - name: Push
+        if: env.UPDATED == 'true'
+        run: git push origin "HEAD:${GITHUB_REF_NAME}"
