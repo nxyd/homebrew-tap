@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check Repository Owner
         run: |
@@ -72,7 +72,7 @@ jobs:
 
           download_and_hash() {
             local arch="$1" url expected_hash dmg
-            url=$(jq -r --arg re "^PI-Desktop-${NEW_VERSION}-${arch}\\.dmg$" \
+            url=$(jq -r --arg re "PI-Desktop-${NEW_VERSION}-${arch}\\.dmg$" \
               '[.assets[].browser_download_url | select(test($re))] | first // empty' "${RELEASE_JSON}")
             if [[ -z "${url}" ]]; then
               echo "::error::No ${arch} dmg found for ${NEW_VERSION}" >&2
