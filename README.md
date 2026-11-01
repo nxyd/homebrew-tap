@@ -13,10 +13,6 @@ brew trust nxyd/tap
 
 install: `brew install --cask nxyd/homebrew-tap/clashx-meta`
 
-#### FlClash
-
-install: `brew install --cask nxyd/homebrew-tap/flclash`
-
 #### PiliPlus
 
 install: `brew install --cask nxyd/homebrew-tap/piliplus`
