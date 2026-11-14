@@ -1,0 +1,122 @@
+name: Auto Update moomoo.rb
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+  push:
+    paths:
+      - .github/workflows/moomoo.yml
+      - Casks/moomoo.rb
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-moomoo
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  Update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check Repository Owner
+        run: |
+          if [ "${{ github.repository_owner }}" != "nxyd" ]; then
+            echo "Repository owner is not nxyd. Cancelling the job."
+            exit 1
+          fi
+
+      - name: Update cask
+        run: |
+          #!/usr/bin/env bash
+          # Bump Casks/moomoo.rb to the latest moomoo for Mac build.
+          #
+          # moomoo ships one universal dmg per release:
+          #   moomoo_desktop_<version>_Website.dmg
+          # The version is only exposed on the download page (no GitHub releases),
+          # and the site answers the default curl user agent with a 403, so a
+          # browser user agent is required here as well as in the cask's livecheck.
+          set -euo pipefail
+
+          CASK="Casks/moomoo.rb"
+          PAGE_URL="https://www.moomoo.com/download/mac"
+          UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+          TMP_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+          PAGE="${TMP_DIR}/moomoo-download.html"
+
+          echo "Fetching ${PAGE_URL}"
+          curl -fsSL --retry 3 --retry-delay 5 -A "${UA}" "${PAGE_URL}" -o "${PAGE}"
+
+          NEW_VERSION=$(grep -oE 'moomoo_desktop_[0-9.]+_Website\.dmg' "${PAGE}" \
+            | sed -E 's/^moomoo_desktop_([0-9.]+)_Website\.dmg$/\1/' \
+            | sort -V | tail -n 1)
+          if [[ -z "${NEW_VERSION}" ]]; then
+            echo "::error::Could not find a moomoo macOS download link on ${PAGE_URL}"
+            exit 1
+          fi
+          echo "Latest version: ${NEW_VERSION}"
+
+          NEW_URL="https://softwaredownload.futustatic.com/moomoo_desktop_${NEW_VERSION}_Website.dmg"
+          if ! curl -fsIL --retry 3 --retry-delay 5 -A "${UA}" "${NEW_URL}" >/dev/null; then
+            echo "::error::Download link is not reachable: ${NEW_URL}"
+            exit 1
+          fi
+
+          CURRENT_VERSION=$(sed -nE 's/^ *version "(.*)"$/\1/p' "${CASK}" | head -n 1)
+          CURRENT_SHA256=$(sed -nE 's/^ *sha256 "(.*)"$/\1/p' "${CASK}" | head -n 1)
+          echo "Current: ${CURRENT_VERSION}"
+
+          if [[ "${CURRENT_VERSION}" == "${NEW_VERSION}" ]]; then
+            echo "moomoo is already up to date."
+            if [[ -n "${GITHUB_ENV:-}" ]]; then
+              echo "UPDATED=false" >> "${GITHUB_ENV}"
+            fi
+            exit 0
+          fi
+
+          DMG="${TMP_DIR}/moomoo.dmg"
+          echo "Downloading $(basename "${NEW_URL}")"
+          curl -fsSL --retry 3 --retry-delay 5 -A "${UA}" -o "${DMG}" "${NEW_URL}"
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            NEW_SHA256=$(sha256sum "${DMG}" | awk '{ print $1 }')
+          else
+            NEW_SHA256=$(shasum -a 256 "${DMG}" | awk '{ print $1 }')
+          fi
+          rm -f "${DMG}" "${PAGE}"
+
+          echo "Latest:  ${NEW_VERSION} sha256=${NEW_SHA256} (was ${CURRENT_SHA256})"
+
+          NEW_VERSION="${NEW_VERSION}" NEW_SHA256="${NEW_SHA256}" perl -pi -e '
+            s{^  version "[^"]*"$}{  version "$ENV{NEW_VERSION}"};
+            s{^  sha256 "[0-9a-f]{64}"$}{  sha256 "$ENV{NEW_SHA256}"};
+          ' "${CASK}"
+
+          # Fail loudly instead of committing a broken cask.
+          grep -qx "  version \"${NEW_VERSION}\"" "${CASK}"
+          grep -qx "  sha256 \"${NEW_SHA256}\"" "${CASK}"
+
+          echo "Updated ${CASK} to ${NEW_VERSION}"
+          if [[ -n "${GITHUB_ENV:-}" ]]; then
+            echo "UPDATED=true" >> "${GITHUB_ENV}"
+            echo "VERSION=${NEW_VERSION}" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Commit
+        if: env.UPDATED == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Casks/moomoo.rb
+          git commit -m "Update moomoo to latest version: ${{ env.VERSION }}."
+
+      - name: Push
+        if: env.UPDATED == 'true'
+        run: git push origin "HEAD:${GITHUB_REF_NAME}"

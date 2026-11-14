@@ -26,3 +26,10 @@ install: `brew install --cask nxyd/homebrew-tap/pi-desktop`
 
 PI-Desktop 自带 electron-updater 自动更新，cask 标记了 `auto_updates true`；如需由 Homebrew 统一升级，跳过其内置更新即可。
 支持 Apple Silicon 与 Intel 两种架构，macOS 12 (Monterey) 及以上。
+
+#### moomoo
+
+install: `brew install --cask nxyd/homebrew-tap/moomoo`
+
+moomoo（富途海外版）桌面客户端，通用包（Apple Silicon + Intel 共用同一 dmg），已由 Moomoo Technologies Inc. 签名并公证；
+内置 LiveUpdate 自动更新，cask 标记了 `auto_updates true`。
