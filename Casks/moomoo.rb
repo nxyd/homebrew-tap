@@ -1,6 +1,6 @@
 cask "moomoo" do
-  version "16.39.27508"
-  sha256 "0b40516142bb59230eec537aa73fc80ea88b46ce1cf005e7c9c73c1a7080ac95"
+  version "16.40.27608"
+  sha256 "e5fa7d2c217bff14ce297c92b3cec5eea5795c8fbc85625fd63893de0ee54312"
 
   url "https://softwaredownload.futustatic.com/moomoo_desktop_#{version}_Website.dmg"
   name "moomoo"
